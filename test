@@ -1,0 +1,142 @@
+'use client'
+
+import { useState, useEffect, useRef } from 'react'
+import { Button } from "@/components/ui/button"
+import { Card } from "@/components/ui/card"
+import { Textarea } from "@/components/ui/textarea"
+import { Play, Square } from "lucide-react"
+
+// 注意: 実際の使用時には、このキーをサーバーサイドで安全に管理してください
+const API_KEY = 'your_api_key_here'
+
+export default function RealTimePresentation() {
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [inputText, setInputText] = useState("")
+  const [extractedWords, setExtractedWords] = useState<string[]>([])
+  const [topImages, setTopImages] = useState<string[]>([])
+  const [bottomImage, setBottomImage] = useState("")
+  const topImageIndexRef = useRef(0)
+  const [userId] = useState(`user-${Math.random().toString(36).substr(2, 9)}`)
+
+  // Extract words from input text
+  useEffect(() => {
+    if (isGenerating) {
+      const words = inputText.split(/\s+/).filter(word => word.length > 0)
+      setExtractedWords(words)
+    }
+  }, [inputText, isGenerating])
+
+  // Function to call Dify.ai API
+  const callDifyAPI = async (word: string) => {
+    try {
+      const response = await fetch('https://api.dify.ai/v1/workflows/run', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          inputs: { text: word },
+          response_mode: "streaming",
+          user: userId
+        })
+      })
+
+      if (!response.body) throw new Error('No response body')
+
+      const reader = response.body.getReader()
+      let result = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        result += new TextDecoder().decode(value)
+        // Here you would process the streamed response
+        // For this example, we'll just use the word as the image placeholder
+      }
+
+      return `/placeholder.svg?height=200&width=200&text=${encodeURIComponent(word)}`
+    } catch (error) {
+      console.error('Error calling Dify.ai API:', error)
+      return `/placeholder.svg?height=200&width=200&text=Error`
+    }
+  }
+
+  // Simulated image generation for top row
+  useEffect(() => {
+    if (isGenerating && extractedWords.length > 0) {
+      const interval = setInterval(async () => {
+        const word = extractedWords[Math.floor(Math.random() * extractedWords.length)]
+        const newImage = await callDifyAPI(word)
+        setTopImages(prev => {
+          const newImages = [...prev]
+          newImages[topImageIndexRef.current] = newImage
+          topImageIndexRef.current = (topImageIndexRef.current + 1) % 3
+          return newImages
+        })
+      }, 2000) // Update every 2 seconds for demonstration
+      return () => clearInterval(interval)
+    }
+  }, [extractedWords, isGenerating])
+
+  // Simulated image generation for bottom row
+  useEffect(() => {
+    let interval: NodeJS.Timeout
+    if (isGenerating) {
+      const updateBottomImage = async () => {
+        const timestamp = new Date().toLocaleTimeString()
+        const newImage = await callDifyAPI(`Summary at ${timestamp}`)
+        setBottomImage(newImage)
+      }
+      updateBottomImage() // Initial update
+      interval = setInterval(updateBottomImage, 10000)
+    }
+    return () => clearInterval(interval)
+  }, [isGenerating])
+
+  const toggleGenerating = () => {
+    setIsGenerating(!isGenerating)
+    if (!isGenerating) {
+      setTopImages([])
+      setBottomImage("")
+      topImageIndexRef.current = 0
+    }
+  }
+
+  return (
+    <div className="container mx-auto p-4">
+      <h1 className="text-2xl font-bold mb-4">リアルタイムプレゼンテーション生成</h1>
+      <Card className="p-4 mb-4">
+        <Textarea
+          placeholder="テキストを入力してください..."
+          value={inputText}
+          onChange={(e) => setInputText(e.target.value)}
+          rows={5}
+          className="mb-4"
+        />
+        <Button onClick={toggleGenerating} className="mb-4">
+          {isGenerating ? <Square className="mr-2" /> : <Play className="mr-2" />}
+          {isGenerating ? '生成停止' : '生成開始'}
+        </Button>
+      </Card>
+      <div className="grid grid-cols-3 gap-4 mb-4">
+        {[0, 1, 2].map((index) => (
+          <Card key={index} className="p-2 h-[250px] flex items-center justify-center">
+            {topImages[index] ? (
+              <img src={topImages[index]} alt={`Generated image ${index + 1}`} className="max-w-full max-h-full object-contain" />
+            ) : (
+              <p className="text-gray-400">画像生成待ち...</p>
+            )}
+          </Card>
+        ))}
+      </div>
+      <Card className="p-2 h-[250px] flex items-center justify-center">
+        {bottomImage ? (
+          <img src={bottomImage} alt="Summary image" className="max-w-full max-h-full object-contain" />
+        ) : (
+          <p className="text-gray-400">サマリー画像生成待ち...</p>
+        )}
+      </Card>
+    </div>
+  )
+}
